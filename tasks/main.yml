@@ -1,0 +1,69 @@
+---
+- name: Install DNVM install prerequisites
+  become: yes
+  apt: "pkg={{ item }} state=present update_cache=yes"
+  with_items:
+   - unzip
+   - curl
+
+- name: Download DNVM install script
+  get_url: url=https://raw.githubusercontent.com/aspnet/Home/dev/dnvminstall.sh dest=/tmp/dnvminstall.sh force=yes
+
+- name: Install DNVM 
+  shell: "DNX_BRANCH=dev sh /tmp/dnvminstall.sh && source ~/.dnx/dnvm/dnvm.sh"
+  args:
+     executable: /bin/bash
+
+- name: Install DNX and libuv prerequisites
+  become: yes
+  apt: "pkg={{ item }} state=present"
+  with_items:
+   - libunwind8
+   - gettext
+   - libssl-dev
+   - libcurl4-openssl-dev
+   - zlib1g
+   - libicu-dev 
+   - uuid-dev
+
+- name: Use DNVM to install DNX for .NET Core
+  shell: "source ~/.dnx/dnvm/dnvm.sh && dnvm install {{ aspnetcore_version }} -r coreclr -p"
+  args:
+     executable: /bin/bash
+  register: source
+
+# could possibly install openjdk-7-jdk, instead of having Jenkins install
+# could separate out Jenkins specific tasks into role
+- name: Install Jenkins prerequisites
+  become: yes
+  apt: "pkg={{ item }} state=present"
+  with_items:
+   - git-core
+
+# this was original configured in the Jenkins job
+# ^PATH="(\/home.*?:)?(.*)"$ - this regex can run everytime, but will also trigger server restart everytime
+- name: Add DNU/DNX to PATH
+  become: yes
+  lineinfile:
+    dest=/etc/environment
+    regexp='^PATH="(?!\/home)(.*)"$'
+    line='PATH="/home/ubuntu/.dnx/runtimes/dnx-coreclr-linux-x64.{{ aspnetcore_version }}/bin:\1"'
+    backrefs=yes
+  register: path_result
+
+- name: Restart server
+  become: yes
+  command: shutdown -r now "Ansible updates triggered"
+  async: 0
+  poll: 0
+  ignore_errors: true
+
+- name: Waiting for server to come back
+  local_action: 
+    wait_for 
+      host={{ ansible_ssh_host | default(inventory_hostname) }}
+      port=22
+      state=started
+      delay=30 
+      timeout=300
+      connect_timeout=15
